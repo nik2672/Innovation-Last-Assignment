@@ -4,7 +4,7 @@ import {
   AppBar, Toolbar, Typography, Container, Button, Box,
   Drawer, List, ListItem, ListItemIcon, ListItemText, IconButton,
   Switch, Snackbar, Alert, Divider, TextField, MenuItem,
-  Card, CardContent, CardMedia, Grid, Fade, CircularProgress, // Added CircularProgress here
+  Card, CardContent, CardMedia, Grid, Fade, CircularProgress,
 } from '@mui/material';
 import {
   Menu as MenuIcon,
@@ -102,8 +102,23 @@ function PredictionForm() {
   const [error, setError] = useState(null);
   const [loadingPrediction, setLoadingPrediction] = useState(false);
 
+  // Validation states
+  const [postcodeError, setPostcodeError] = useState(false);
+  const [postcodeHelperText, setPostcodeHelperText] = useState('');
+
   const handleSubmit = async (event) => {
     event.preventDefault();
+
+    // Reset error messages
+    setPostcodeError(false);
+    setPostcodeHelperText('');
+
+    // Validate postcode
+    if (postcode.length !== 4) {
+      setPostcodeError(true);
+      setPostcodeHelperText('Postcode must be exactly 4 digits');
+      return; // Prevent form submission
+    }
 
     // Prepare data
     const data = {
@@ -180,6 +195,8 @@ function PredictionForm() {
               type="number"
               value={postcode}
               onChange={(e) => setPostcode(e.target.value)}
+              error={postcodeError}
+              helperText={postcodeHelperText}
               fullWidth
               margin="normal"
             />
