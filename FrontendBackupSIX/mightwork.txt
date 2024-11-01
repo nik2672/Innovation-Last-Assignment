@@ -1,0 +1,235 @@
+// PredictionPage.js
+import React, { useState, useEffect } from 'react';
+import { Container, Box, Typography, Fade, CircularProgress } from '@mui/material';
+import { useLocation } from 'react-router-dom';
+import { Bar, Line } from 'react-chartjs-2';
+import MapComponent from './MapComponent';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  LineElement,
+  PointElement,
+  Title,
+  Tooltip,
+  Legend,
+} from 'chart.js';
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  LineElement,
+  PointElement,
+  Title,
+  Tooltip,
+  Legend
+);
+
+function PredictionPage() {
+  const location = useLocation();
+  const { formData } = location.state || {};
+  const [predictedPrice, setPredictedPrice] = useState(null);
+  const [error, setError] = useState(null);
+  const [loadingPrediction, setLoadingPrediction] = useState(true);
+  const [chartData, setChartData] = useState({
+    barData: { labels: [], datasets: [] },
+    lineDataRooms: { labels: [], datasets: [] },
+  });
+
+  useEffect(() => {
+    const fetchPrediction = async () => {
+      if (!formData) {
+        setError('No data provided.');
+        setLoadingPrediction(false);
+        return;
+      }
+
+      try {
+        const response = await fetch('http://localhost:8000/predict', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(formData),
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          setPredictedPrice(result.predicted_price);
+          setError(null);
+        } else {
+          setError('Error fetching prediction.');
+        }
+      } catch (error) {
+        console.error('Error:', error);
+        setError('Error fetching prediction.');
+      } finally {
+        setLoadingPrediction(false);
+      }
+    };
+
+    fetchPrediction();
+  }, [formData]);
+
+  useEffect(() => {
+    const fetchChartData = async () => {
+      try {
+        const response = await fetch('http://localhost:8000/data');
+        const data = await response.json();
+
+        const priceByType = data.reduce((acc, curr) => {
+          const type = curr.Type;
+          const price = parseFloat(curr.Price);
+          if (!isNaN(price)) {
+            acc[type] = acc[type] ? [...acc[type], price] : [price];
+          }
+          return acc;
+        }, {});
+
+        const avgPriceByType = Object.keys(priceByType).map((type) => ({
+          type,
+          avgPrice: priceByType[type].reduce((a, b) => a + b, 0) / priceByType[type].length,
+        }));
+
+        const avgPriceByRooms = data.reduce((acc, curr) => {
+          const rooms = parseInt(curr.Rooms, 10);
+          const price = parseFloat(curr.Price);
+          if (!isNaN(price)) {
+            acc[rooms] = acc[rooms] ? [...acc[rooms], price] : [price];
+          }
+          return acc;
+        }, {});
+
+        const barData = {
+          labels: avgPriceByType.map((d) => d.type),
+          datasets: [
+            {
+              label: 'Average Price by Property Type',
+              data: avgPriceByType.map((d) => d.avgPrice),
+              backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56'],
+              order: 5
+            },
+            {
+              label: 'Predicted Price',
+              data: avgPriceByType.map((d) => (formData.Type === d.type ? predictedPrice : null)),
+              type: 'line',
+              borderColor: '#FF4500',
+              backgroundColor: '#FF4500',
+              borderWidth: 3,
+              pointRadius: 10,
+              hoverRadius: 12,
+              pointBackgroundColor: '#FF4500',
+              pointStyle: 'star',
+              showLine: false,
+              order: 0,
+            },
+          ],
+        };
+
+        const lineDataRooms = {
+          labels: Object.keys(avgPriceByRooms),
+          datasets: [
+            {
+              label: 'Average Price by Number of Rooms',
+              data: Object.values(avgPriceByRooms).map(
+                (prices) => prices.reduce((a, b) => a + b, 0) / prices.length
+              ),
+              borderColor: '#36A2EB',
+              fill: false,
+            },
+            {
+              label: 'Predicted Price',
+              data: Object.keys(avgPriceByRooms).map((room) =>
+                formData.Rooms === parseInt(room) ? predictedPrice : null
+              ),
+              type: 'line',
+              borderColor: '#FF4500',
+              borderWidth: 3,
+              pointRadius: 10,
+              pointStyle: 'star',
+              pointBackgroundColor: '#FF4500',
+              showLine: false,
+              order: 2,
+            },
+          ],
+        };
+
+        setChartData({ barData, lineDataRooms });
+      } catch (error) {
+        console.error('Error loading chart data:', error);
+      }
+    };
+
+    fetchChartData();
+  }, [predictedPrice, formData]);
+
+  return (
+    <Container component="main" sx={{ mt: 8, mb: 2, flex: 1 }}>
+      <Fade in timeout={1000}>
+        <Box>
+          <Typography variant="h3" component="h1" gutterBottom>
+            Prediction Result
+          </Typography>
+
+          {loadingPrediction && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+              <CircularProgress />
+            </Box>
+          )}
+
+          {predictedPrice && (
+            <>
+              <Typography variant="h5" sx={{ mt: 4 }}>
+                Predicted Price: ${predictedPrice.toFixed(2)}
+              </Typography>
+
+              <MapComponent postcode={formData.Postcode} />
+
+              {chartData.barData.datasets.length > 0 && (
+                <Box sx={{ mt: 4 }}>
+                  <Typography variant="h6" gutterBottom>Price Distribution by Property Type</Typography>
+                  <Bar 
+                    data={chartData.barData} 
+                    options={{
+                      scales: {
+                        y: {
+                          stacked: true,
+                        },
+                      },
+                      plugins: {
+                        legend: {
+                          display: true,
+                          labels: {
+                            color: 'rgb(255, 99, 132)',
+                            font: {
+                              size: 16,
+                            },
+                          },
+                        },
+                      },
+                    }}
+                  />
+                </Box>
+              )}
+
+              {chartData.lineDataRooms.datasets.length > 0 && (
+                <Box sx={{ mt: 4 }}>
+                  <Typography variant="h6" gutterBottom>Average Price by Number of Rooms</Typography>
+                  <Line data={chartData.lineDataRooms} />
+                </Box>
+              )}
+            </>
+          )}
+
+          {error && (
+            <Typography color="error" sx={{ mt: 4 }}>
+              {error}
+            </Typography>
+          )}
+        </Box>
+      </Fade>
+    </Container>
+  );
+}
+
+export default PredictionPage;

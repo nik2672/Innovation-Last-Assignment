@@ -1,0 +1,206 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { Container, Box, Typography, Fade, CircularProgress } from '@mui/material';
+import { useLocation } from 'react-router-dom';
+import { Bar, Line } from 'react-chartjs-2';
+import 'chart.js/auto';
+import Papa from 'papaparse';
+import L from 'leaflet';
+
+function PredictionPage() {
+  const location = useLocation();
+  const { formData } = location.state || {};
+  const [predictedPrice, setPredictedPrice] = useState(null);
+  const [error, setError] = useState(null);
+  const [loadingPrediction, setLoadingPrediction] = useState(true);
+  const [chartData, setChartData] = useState({});
+  const mapRef = useRef(null);  // Reference to store the map instance
+
+  useEffect(() => {
+    const fetchPrediction = async () => {
+      if (!formData) {
+        setError('No data provided.');
+        setLoadingPrediction(false);
+        return;
+      }
+
+      try {
+        const response = await fetch('http://localhost:8000/predict', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(formData),
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          setPredictedPrice(result.predicted_price);
+          setError(null);
+        } else {
+          setError('Error fetching prediction.');
+        }
+      } catch (error) {
+        console.error('Error:', error);
+        setError('Error fetching prediction.');
+      } finally {
+        setLoadingPrediction(false);
+      }
+    };
+
+    fetchPrediction();
+  }, [formData]);
+
+  useEffect(() => {
+    Papa.parse('/data.csv', {
+      download: true,
+      header: true,
+      complete: (results) => {
+        const data = results.data;
+
+        // Process data for each chart
+        const priceByType = data.reduce((acc, curr) => {
+          const type = curr.Type;
+          const price = parseFloat(curr.Price);
+          if (!isNaN(price)) {
+            acc[type] = acc[type] ? [...acc[type], price] : [price];
+          }
+          return acc;
+        }, {});
+
+        const avgPriceByType = Object.keys(priceByType).map((type) => ({
+          type,
+          avgPrice: priceByType[type].reduce((a, b) => a + b, 0) / priceByType[type].length,
+        }));
+
+        const avgPriceByRooms = data.reduce((acc, curr) => {
+          const rooms = parseInt(curr.Rooms, 10);
+          const price = parseFloat(curr.Price);
+          if (!isNaN(price)) {
+            acc[rooms] = acc[rooms] ? [...acc[rooms], price] : [price];
+          }
+          return acc;
+        }, {});
+
+        const avgPriceByDistance = data.reduce((acc, curr) => {
+          const distance = parseFloat(curr.Distance);
+          const price = parseFloat(curr.Price);
+          if (!isNaN(price)) {
+            acc[distance] = acc[distance] ? [...acc[distance], price] : [price];
+          }
+          return acc;
+        }, {});
+
+        // Data for Bar Chart
+        const barData = {
+          labels: avgPriceByType.map((d) => d.type),
+          datasets: [
+            {
+              label: 'Average Price by Property Type',
+              data: avgPriceByType.map((d) => d.avgPrice),
+              backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56'],
+            },
+          ],
+        };
+
+        // Data for Line Chart (Rooms)
+        const lineDataRooms = {
+          labels: Object.keys(avgPriceByRooms),
+          datasets: [
+            {
+              label: 'Average Price by Number of Rooms',
+              data: Object.values(avgPriceByRooms).map(
+                (prices) => prices.reduce((a, b) => a + b, 0) / prices.length
+              ),
+              borderColor: '#36A2EB',
+              fill: false,
+            },
+          ],
+        };
+
+        // Data for Line Chart (Distance)
+        const lineDataDistance = {
+          labels: Object.keys(avgPriceByDistance),
+          datasets: [
+            {
+              label: 'Price by Distance from City',
+              data: Object.values(avgPriceByDistance).map(
+                (prices) => prices.reduce((a, b) => a + b, 0) / prices.length
+              ),
+              borderColor: '#FF6384',
+              fill: false,
+            },
+          ],
+        };
+
+        setChartData({ barData, lineDataRooms, lineDataDistance });
+      },
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!mapRef.current) {
+      // Only initialize the map once
+      const map = L.map('map').setView([-37.8136, 144.9631], 10);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors',
+      }).addTo(map);
+
+      mapRef.current = map;  // Store the map instance in the ref
+    }
+  }, []);
+
+  return (
+    <Container component="main" sx={{ mt: 8, mb: 2, flex: 1 }}>
+      <Fade in timeout={1000}>
+        <Box>
+          <Typography variant="h3" component="h1" gutterBottom>
+            Prediction Result
+          </Typography>
+
+          {loadingPrediction && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+              <CircularProgress />
+            </Box>
+          )}
+
+          {predictedPrice && (
+            <Typography variant="h5" sx={{ mt: 4 }}>
+              Predicted Price: ${predictedPrice.toFixed(2)}
+            </Typography>
+          )}
+
+          {error && (
+            <Typography color="error" sx={{ mt: 4 }}>
+              {error}
+            </Typography>
+          )}
+
+          {/* First chart: Price Distribution by Property Type */}
+          <Box sx={{ mt: 4 }}>
+            <Typography variant="h6" gutterBottom>Price Distribution by Property Type</Typography>
+            {chartData.barData && <Bar data={chartData.barData} />}
+          </Box>
+
+          {/* Second chart: Average Price by Number of Rooms */}
+          <Box sx={{ mt: 4 }}>
+            <Typography variant="h6" gutterBottom>Average Price by Number of Rooms</Typography>
+            {chartData.lineDataRooms && <Line data={chartData.lineDataRooms} />}
+          </Box>
+
+          {/* Third chart: Price by Distance from City */}
+          <Box sx={{ mt: 4 }}>
+            <Typography variant="h6" gutterBottom>Price by Distance from City</Typography>
+            {chartData.lineDataDistance && <Line data={chartData.lineDataDistance} />}
+          </Box>
+
+          {/* Map Container */}
+          <Box sx={{ mt: 4 }}>
+            <Typography variant="h6">Map of Melbourne Area</Typography>
+            <Box id="map" sx={{ height: 400, width: '100%' }} />
+          </Box>
+        </Box>
+      </Fade>
+    </Container>
+  );
+}
+
+export default PredictionPage;
